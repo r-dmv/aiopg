@@ -159,7 +159,7 @@ class Connection:
         # If there is an error, we'll get it from poll.
         self = weak_self()
 
-        if self._conn.status == CONN_STATUS_CONNECTING:
+        if self and self._conn.status == CONN_STATUS_CONNECTING:
             socket_shutdown(ctypes.c_int(self._fileno),
                             ctypes.c_int(socket.SHUT_RDWR))
             self._ready(self._weakref)
