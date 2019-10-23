@@ -126,8 +126,8 @@ class Connection:
         self._loop = loop
         self._conn = psycopg2.connect(dsn, async_=True, **kwargs)
         self._dsn = self._conn.dsn
-        self._dns_params = self._conn.get_dsn_parameters()
-        self._conn_timeout = self._dns_params.get('connect_timeout')
+        self._dsn_params = self._conn.get_dsn_parameters()
+        self._conn_timeout = self._dsn_params.get('connect_timeout')
         if self._conn_timeout:
             self._conn_timeout = float(self._conn_timeout)
 
@@ -143,7 +143,8 @@ class Connection:
         self._conn_cursor = None
         self._notifies = asyncio.Queue(loop=loop)
         self._weakref = weakref.ref(self)
-        self._loop.add_reader(self._fileno, self._ready, self._weakref)
+        self._loop.add_reader(self._fileno, self._ready, self._weakref,
+                              self._fileno)
         self._conn_timeout_handler = None
         if self._conn_timeout:
             self._conn_timeout_handler = self._loop.call_later(
@@ -158,16 +159,23 @@ class Connection:
         # inside poll, then give libpq a chance to try another host.
         # If there is an error, we'll get it from poll.
         self = weak_self()
+        if self is None:
+            return
 
         if self and self._conn.status == CONN_STATUS_CONNECTING:
-            socket_shutdown(ctypes.c_int(self._fileno),
-                            ctypes.c_int(socket.SHUT_RDWR))
-            self._ready(self._weakref)
+            if self._fileno is not None:
+                socket_shutdown(ctypes.c_int(self._fileno),
+                                ctypes.c_int(socket.SHUT_RDWR))
+            self._ready(self._weakref, self._fileno)
 
     @staticmethod
-    def _ready(weak_self):
+    def _ready(weak_self, fd):
         self = weak_self()
         if self is None:
+            return
+
+        # it may be an old callback for old fd which is already closed by libpq
+        if self._fileno != fd:
             return
 
         waiter = self._waiter
@@ -211,8 +219,8 @@ class Connection:
 
             if self._conn.status == CONN_STATUS_CONNECTING \
                     and state != POLL_ERROR:
-                # libpq could close and open new connection to the next host
                 old_fileno = self._fileno
+                # libpq could close and open new connection to the next host
                 self._fileno = self._conn.fileno()
 
                 if self._conn_timeout_handler:
@@ -221,14 +229,17 @@ class Connection:
                         self._conn_timeout, self._shutdown, self._weakref)
 
                 with contextlib.suppress(OSError):
-                    # if we are using select selector
-                    self._loop.remove_reader(old_fileno)
-                    if self._writing:
-                        self._loop.remove_writer(old_fileno)
+                    if old_fileno == self._fileno:
+                        # if we are using select selector
+                        self._loop.remove_reader(old_fileno)
+                        if self._writing:
+                            self._loop.remove_writer(old_fileno)
 
-                self._loop.add_reader(self._fileno, self._ready, weak_self)
+                self._loop.add_reader(self._fileno, self._ready, weak_self,
+                                      self._fileno)
                 if self._writing:
-                    self._loop.add_writer(self._fileno, self._ready, weak_self)
+                    self._loop.add_writer(self._fileno, self._ready, weak_self,
+                                          self._fileno)
 
             if state == POLL_OK:
                 if self._writing:
@@ -242,7 +253,8 @@ class Connection:
                     self._writing = False
             elif state == POLL_WRITE:
                 if not self._writing:
-                    self._loop.add_writer(self._fileno, self._ready, weak_self)
+                    self._loop.add_writer(self._fileno, self._ready, weak_self,
+                                          self._fileno)
                     self._writing = True
             elif state == POLL_ERROR:
                 self._fatal_error("Fatal error on aiopg connection: "
@@ -279,7 +291,7 @@ class Connection:
     @asyncio.coroutine
     def _poll(self, waiter, timeout):
         assert waiter is self._waiter, (waiter, self._waiter)
-        self._ready(self._weakref)
+        self._ready(self._weakref, self._fileno)
 
         @asyncio.coroutine
         def cancel():

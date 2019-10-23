@@ -439,7 +439,7 @@ def test_cancelled_connection_is_not_usable_until_cancellation(connect, loop):
 def test_close2(connect, loop):
     conn = yield from connect()
     conn._writing = True
-    loop.add_writer(conn._fileno, conn._ready, conn._weakref)
+    loop.add_writer(conn._fileno, conn._ready, conn._weakref, conn._fileno)
     conn.close()
     assert not conn._writing
     assert conn.closed
@@ -465,7 +465,7 @@ def test_ready_set_exception(connect, loop):
         conn._writing = True
         waiter = conn._create_waiter('test')
 
-        conn._ready(conn._weakref)
+        conn._ready(conn._weakref, conn._fileno)
         assert not conn._writing
         return waiter
 
@@ -490,7 +490,7 @@ def test_ready_OK_with_waiter(connect, loop):
         conn._writing = True
         waiter = conn._create_waiter('test')
 
-        conn._ready(conn._weakref)
+        conn._ready(conn._weakref, conn._fileno)
         assert not conn._writing
         assert not impl.close.called
 
@@ -515,7 +515,7 @@ def test_ready_POLL_ERROR(connect, loop):
         handler = mock.Mock()
         loop.set_exception_handler(handler)
 
-        conn._ready(conn._weakref)
+        conn._ready(conn._weakref, conn._fileno)
         handler.assert_called_with(
             loop,
             {'connection': conn,
@@ -543,7 +543,7 @@ def test_ready_unknown_answer(connect, loop):
         handler = mock.Mock()
         loop.set_exception_handler(handler)
 
-        conn._ready(conn._weakref)
+        conn._ready(conn._weakref, conn._fileno)
         handler.assert_called_with(
             loop,
             {'connection': conn,
@@ -729,7 +729,7 @@ def test_remove_reader_from_alive_fd(connect):
     m_remove_reader = mock.Mock()
     conn._loop.remove_reader = m_remove_reader
 
-    conn._ready(conn._weakref)
+    conn._ready(conn._weakref, conn._fileno)
     assert not m_remove_reader.called
 
     conn.close()
@@ -754,7 +754,7 @@ def test_remove_reader_from_dead_fd(connect):
     old_remove_reader = conn._loop.remove_reader
     conn._loop.remove_reader = m_remove_reader
 
-    conn._ready(conn._weakref)
+    conn._ready(conn._weakref, conn._fileno)
     assert m_remove_reader.called_with(fileno)
 
     m_remove_reader.reset_mock()
