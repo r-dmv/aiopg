@@ -163,10 +163,12 @@ class Connection:
             return
 
         if self and self._conn.status == CONN_STATUS_CONNECTING:
-            if self._fileno is not None:
-                socket_shutdown(ctypes.c_int(self._fileno),
-                                ctypes.c_int(socket.SHUT_RDWR))
-            self._ready(self._weakref, self._fileno)
+            try:
+                if self._conn.fileno() == self._fileno:
+                    socket_shutdown(ctypes.c_int(self._fileno), ctypes.c_int(socket.SHUT_RDWR))
+                    self._ready(self._weakref, self._fileno)
+            except psycopg2.InterfaceError:
+                pass
 
     @staticmethod
     def _ready(weak_self, fd):
